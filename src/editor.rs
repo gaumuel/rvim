@@ -140,9 +140,26 @@ impl App {
 
     pub fn scroll(&mut self) {
         let rows = self.rows();
-        let tab = self.tab_mut();
-        if tab.cy < tab.offset { tab.offset = tab.cy; }
-        if tab.cy >= tab.offset + rows { tab.offset = tab.cy - rows + 1; }
+        let tab = self.tab();
+        let cols = self.cols();
+
+        // Compute the cursor's absolute screen row
+        let mut cursor_screen_row: usize = 0;
+        for i in 0..tab.cy {
+            cursor_screen_row += self.wrapped_line_height(i);
+        }
+        // Add wrap offset within current line
+        if cols > 0 {
+            cursor_screen_row += tab.cx / cols;
+        }
+
+        let offset = self.tab().offset;
+        if cursor_screen_row < offset {
+            self.tab_mut().offset = cursor_screen_row;
+        }
+        if cursor_screen_row >= offset + rows {
+            self.tab_mut().offset = cursor_screen_row - rows + 1;
+        }
     }
 
     pub fn clamp_cursor(&mut self) {

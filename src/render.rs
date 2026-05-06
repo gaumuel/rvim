@@ -9,6 +9,40 @@ use crate::mode::Mode;
 use crate::style;
 
 impl App {
+    /// How many screen rows a buffer line occupies with wrapping.
+    pub fn wrapped_line_height(&self, line_idx: usize) -> usize {
+        let buf = self.buf();
+        if line_idx >= buf.rope.len_lines() { return 1; }
+        let line = buf.rope.line(line_idx);
+        let len = line.len_chars();
+        // Exclude trailing newline
+        let char_count = if len > 0 && line.char(len - 1) == '\n' { len - 1 } else { len };
+        let cols = self.cols();
+        if cols == 0 { return 1; }
+        if char_count == 0 { return 1; }
+        (char_count + cols - 1) / cols
+    }
+
+    /// Compute the screen row of the cursor relative to tab.offset (screen row offset).
+    /// Returns (screen_row, screen_col) relative to the viewport.
+    pub fn cursor_screen_pos(&self) -> (usize, usize) {
+        let tab = self.tab();
+        let cols = self.cols();
+        let screen_col = if cols == 0 { 0 } else { tab.cx % cols };
+        let cursor_wrap_row = if cols == 0 { 0 } else { tab.cx / cols };
+
+        // Count screen rows from line 0 to cursor line
+        let mut screen_row: usize = 0;
+        for line_idx in 0..tab.cy {
+            screen_row += self.wrapped_line_height(line_idx);
+        }
+        screen_row += cursor_wrap_row;
+
+        // Subtract the scroll offset (which is in screen rows)
+        let row_in_viewport = screen_row.saturating_sub(tab.offset);
+        (row_in_viewport, screen_col)
+    }
+
     pub fn draw(&self, out: &mut impl Write) -> io::Result<()> {
         queue!(out, cursor::Hide, cursor::MoveTo(0, 0))?;
 
@@ -21,7 +55,6 @@ impl App {
         let cols = self.cols();
 
         if buf.crashed {
-            // Show crash message
             queue!(out, cursor::MoveTo(0, 1))?;
             queue!(out, SetForegroundColor(Color::Red))?;
             write!(out, "  BUFFER CRASHED")?;
@@ -39,53 +72,107 @@ impl App {
             let theme = &self.ts.themes[style::THEME_NAME];
             let mut h = HighlightLines::new(syntax, theme);
 
-            for i in 0..rows {
-                let file_row = i + tab.offset;
-                let is_cursorline = tab.cursorline && file_row == tab.cy;
-                queue!(out, cursor::MoveTo(0, (i + 1) as u16))?;
+            // Find which buffer line corresponds to tab.offset screen rows
+            let mut screen_row_acc: usize = 0;
+            let mut start_line: usize = 0;
+            let mut skip_wrap_rows: usize = 0; // how many wrap rows to skip in the first visible line
 
-                if is_cursorline {
-                    queue!(out, crossterm::style::SetBackgroundColor(style::CURSORLINE_BG))?;
-                    write!(out, "{}", " ".repeat(cols))?;
-                    queue!(out, cursor::MoveTo(0, (i + 1) as u16))?;
+            for i in 0..buf.rope.len_lines() {
+                let lh = self.wrapped_line_height(i);
+                if screen_row_acc + lh > tab.offset {
+                    start_line = i;
+                    skip_wrap_rows = tab.offset - screen_row_acc;
+                    break;
                 }
+                screen_row_acc += lh;
+                start_line = i + 1;
+            }
 
-                if file_row < buf.rope.len_lines() {
-                    let line_str = buf.rope.line(file_row).to_string();
-                    if let Ok(ranges) = h.highlight_line(&line_str, &self.ss) {
-                        let mut col = 0usize;
-                        for (st, segment) in ranges {
-                            for ch in segment.chars() {
-                                if ch == '\n' { continue; }
-                                if col >= cols { break; }
-                                let in_sel = self.is_in_visual_selection(file_row, col);
-                                let fg = style::syntect_to_crossterm(st);
-                                queue!(out, SetForegroundColor(fg))?;
-                                if in_sel {
-                                    queue!(out,
-                                        SetForegroundColor(style::VISUAL_FG),
-                                        crossterm::style::SetBackgroundColor(style::VISUAL_BG),
-                                    )?;
-                                }
-                                queue!(out, crossterm::style::Print(ch))?;
-                                if in_sel {
-                                    queue!(out, ResetColor)?;
-                                }
-                                col += 1;
-                            }
-                        }
-                        queue!(out, ResetColor)?;
+            // We need to call highlight_line for lines before start_line to keep highlighter state correct
+            for i in 0..start_line {
+                let line_str = buf.rope.line(i).to_string();
+                let _ = h.highlight_line(&line_str, &self.ss);
+            }
+
+            let mut screen_y: usize = 0; // current screen row being drawn
+
+            'outer: for line_idx in start_line..buf.rope.len_lines() {
+                if screen_y >= rows { break; }
+
+                let is_cursorline = tab.cursorline && line_idx == tab.cy;
+                let line_str = buf.rope.line(line_idx).to_string();
+
+                // Get highlighted segments
+                let ranges = match h.highlight_line(&line_str, &self.ss) {
+                    Ok(r) => r,
+                    Err(_) => continue,
+                };
+
+                // Flatten into chars with styles
+                let mut chars_with_style: Vec<(char, syntect::highlighting::Style)> = Vec::new();
+                for (st, segment) in &ranges {
+                    for ch in segment.chars() {
+                        if ch == '\n' { continue; }
+                        chars_with_style.push((ch, *st));
                     }
-                } else {
-                    queue!(out, SetForegroundColor(style::TILDE_FG))?;
-                    write!(out, "~")?;
                 }
+
+                // Split into wrapped rows
+                let wrap_rows: Vec<&[(char, syntect::highlighting::Style)]> = if chars_with_style.is_empty() {
+                    vec![&[]]
+                } else {
+                    chars_with_style.chunks(cols).collect()
+                };
+
+                for (wrap_idx, wrap_row) in wrap_rows.iter().enumerate() {
+                    // Skip rows before the viewport for the first visible line
+                    if line_idx == start_line && wrap_idx < skip_wrap_rows {
+                        continue;
+                    }
+                    if screen_y >= rows { break 'outer; }
+
+                    queue!(out, cursor::MoveTo(0, (screen_y + 1) as u16))?;
+
+                    if is_cursorline {
+                        queue!(out, crossterm::style::SetBackgroundColor(style::CURSORLINE_BG))?;
+                        write!(out, "{}", " ".repeat(cols))?;
+                        queue!(out, cursor::MoveTo(0, (screen_y + 1) as u16))?;
+                    }
+
+                    for (col_in_wrap, &(ch, st)) in wrap_row.iter().enumerate() {
+                        let char_idx_in_line = wrap_idx * cols + col_in_wrap;
+                        let in_sel = self.is_in_visual_selection(line_idx, char_idx_in_line);
+                        let fg = style::syntect_to_crossterm(st);
+                        queue!(out, SetForegroundColor(fg))?;
+                        if in_sel {
+                            queue!(out,
+                                SetForegroundColor(style::VISUAL_FG),
+                                crossterm::style::SetBackgroundColor(style::VISUAL_BG),
+                            )?;
+                        }
+                        queue!(out, crossterm::style::Print(ch))?;
+                        if in_sel {
+                            queue!(out, ResetColor)?;
+                        }
+                    }
+
+                    queue!(out, ResetColor, terminal::Clear(ClearType::UntilNewLine))?;
+                    screen_y += 1;
+                }
+            }
+
+            // Fill remaining rows with tildes
+            while screen_y < rows {
+                queue!(out, cursor::MoveTo(0, (screen_y + 1) as u16))?;
+                queue!(out, SetForegroundColor(style::TILDE_FG))?;
+                write!(out, "~")?;
                 queue!(out, ResetColor, terminal::Clear(ClearType::UntilNewLine))?;
+                screen_y += 1;
             }
         }
 
         // Status bar
-        let status_row = (self.rows() + 1) as u16;
+        let status_row = (rows + 1) as u16;
         queue!(out, cursor::MoveTo(0, status_row))?;
         queue!(out, SetForegroundColor(style::STATUS_FG))?;
         queue!(out, crossterm::style::SetBackgroundColor(style::STATUS_BG))?;
@@ -112,11 +199,12 @@ impl App {
         }
         queue!(out, terminal::Clear(ClearType::UntilNewLine))?;
 
-        // Position cursor
+        // Position cursor with wrapping
         if !buf.crashed {
+            let (cursor_row, cursor_col) = self.cursor_screen_pos();
             queue!(out, cursor::MoveTo(
-                tab.cx.min(cols.saturating_sub(1)) as u16,
-                (tab.cy - tab.offset + 1) as u16,
+                cursor_col as u16,
+                (cursor_row + 1) as u16, // +1 for tab bar
             ))?;
         }
 
