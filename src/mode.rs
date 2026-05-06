@@ -23,6 +23,52 @@ impl App {
 
     fn handle_normal(&mut self, ev: Event) {
         if let Event::Key(KeyEvent { code, .. }) = ev {
+            // Handle pending operator
+            if let Some(op) = self.tab().pending_op {
+                self.tab_mut().pending_op = None;
+                match (op, code) {
+                    ('d', KeyCode::Char('d')) => {
+                        // dd: delete line
+                        self.with_buffer(|buf, tab| {
+                            let lc = buf.rope.len_lines().max(1);
+                            if lc > 1 {
+                                let start = buf.rope.line_to_char(tab.cy);
+                                let end = if tab.cy + 1 < buf.rope.len_lines() {
+                                    buf.rope.line_to_char(tab.cy + 1)
+                                } else {
+                                    buf.rope.len_chars()
+                                };
+                                buf.rope.remove(start..end);
+                            } else {
+                                let len = buf.rope.len_chars();
+                                if len > 0 { buf.rope.remove(0..len); }
+                            }
+                            buf.dirty = true;
+                        });
+                    }
+                    ('d', KeyCode::Char('w')) => {
+                        // dw: delete word
+                        self.with_buffer(|buf, tab| {
+                            let line = buf.rope.line(tab.cy).to_string();
+                            let chars: Vec<char> = line.chars().collect();
+                            let mut i = tab.cx;
+                            // Skip non-whitespace
+                            while i < chars.len() && !chars[i].is_whitespace() && chars[i] != '\n' { i += 1; }
+                            // Skip trailing whitespace
+                            while i < chars.len() && chars[i].is_whitespace() && chars[i] != '\n' { i += 1; }
+                            let start = buf.rope.line_to_char(tab.cy) + tab.cx;
+                            let end = buf.rope.line_to_char(tab.cy) + i;
+                            if end > start {
+                                buf.rope.remove(start..end);
+                                buf.dirty = true;
+                            }
+                        });
+                    }
+                    _ => {}
+                }
+                return;
+            }
+
             match code {
                 KeyCode::Char('h') | KeyCode::Left => {
                     self.tab_mut().cx = self.tab().cx.saturating_sub(1);
@@ -81,22 +127,7 @@ impl App {
                     });
                 }
                 KeyCode::Char('d') => {
-                    self.with_buffer(|buf, tab| {
-                        let lc = buf.rope.len_lines().max(1);
-                        if lc > 1 {
-                            let start = buf.rope.line_to_char(tab.cy);
-                            let end = if tab.cy + 1 < buf.rope.len_lines() {
-                                buf.rope.line_to_char(tab.cy + 1)
-                            } else {
-                                buf.rope.len_chars()
-                            };
-                            buf.rope.remove(start..end);
-                        } else {
-                            let len = buf.rope.len_chars();
-                            if len > 0 { buf.rope.remove(0..len); }
-                        }
-                        buf.dirty = true;
-                    });
+                    self.tab_mut().pending_op = Some('d');
                 }
                 KeyCode::Char('0') => self.tab_mut().cx = 0,
                 KeyCode::Char('$') => {

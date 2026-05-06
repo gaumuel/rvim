@@ -58,6 +58,7 @@ pub struct Tab {
     pub last_command: String,
     pub cursorline: bool,
     pub visual_anchor: (usize, usize),
+    pub pending_op: Option<char>,
     pub prev_view: Option<(BufferId, usize, usize, usize)>, // for :help restore
 }
 
@@ -74,6 +75,7 @@ impl Tab {
             last_command: String::new(),
             cursorline: false,
             visual_anchor: (0, 0),
+            pending_op: None,
             prev_view: None,
         }
     }
