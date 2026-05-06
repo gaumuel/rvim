@@ -1,0 +1,9 @@
+[package]
+name = "rvim"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ropey = "1.6.1"
+crossterm = "0.28.1"
+syntect = "5.2.0"
