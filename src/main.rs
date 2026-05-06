@@ -1,3 +1,4 @@
+mod commands;
 mod editor;
 mod help;
 mod mode;

@@ -284,6 +284,7 @@ impl App {
 
     fn exec_command(&mut self) {
         let cmd = self.tab().command_buf.trim().to_string();
+        self.tab_mut().last_command = cmd.clone();
         match cmd.as_str() {
             "q" | "q!" => {
                 // If viewing a temporary buffer, restore previous view and remove temp buffer

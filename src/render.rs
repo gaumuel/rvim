@@ -193,19 +193,70 @@ impl App {
         // Command/message line
         queue!(out, cursor::MoveTo(0, status_row + 1))?;
         if tab.mode == Mode::Command {
+            // Draw command palette
+            let suggestions = crate::commands::filter_commands(&tab.command_buf);
+            let max_suggestions = 10usize;
+            let shown: Vec<&str> = suggestions.iter().take(max_suggestions).copied().collect();
+
+            // Row 1: input line
             write!(out, ":{}", tab.command_buf)?;
+            queue!(out, terminal::Clear(ClearType::UntilNewLine))?;
+
+            // Row 2: last command
+            queue!(out, cursor::MoveTo(0, status_row + 2))?;
+            queue!(out, SetForegroundColor(Color::DarkGrey))?;
+            if !tab.last_command.is_empty() {
+                write!(out, " last: :{}", tab.last_command)?;
+            }
+            queue!(out, ResetColor, terminal::Clear(ClearType::UntilNewLine))?;
+
+            // Row 3+: suggestions in columns
+            if !shown.is_empty() {
+                let col_width = 20usize;
+                let num_cols = (cols / col_width).max(1);
+                let mut row_offset = 0u16;
+                for chunk in shown.chunks(num_cols) {
+                    queue!(out, cursor::MoveTo(0, status_row + 3 + row_offset))?;
+                    queue!(out, SetForegroundColor(Color::DarkGreen))?;
+                    for cmd in chunk {
+                        write!(out, " :{:<width$}", cmd, width = col_width - 2)?;
+                    }
+                    queue!(out, ResetColor, terminal::Clear(ClearType::UntilNewLine))?;
+                    row_offset += 1;
+                }
+                // Clear any leftover lines below
+                let total_palette_rows = ((shown.len() + num_cols - 1) / num_cols) as u16;
+                for extra in total_palette_rows..max_suggestions as u16 {
+                    queue!(out, cursor::MoveTo(0, status_row + 3 + extra))?;
+                    queue!(out, terminal::Clear(ClearType::UntilNewLine))?;
+                }
+            } else {
+                queue!(out, cursor::MoveTo(0, status_row + 3))?;
+                queue!(out, SetForegroundColor(Color::DarkGrey))?;
+                write!(out, " (no matches)")?;
+                queue!(out, ResetColor, terminal::Clear(ClearType::UntilNewLine))?;
+            }
         } else if !tab.status_msg.is_empty() {
             write!(out, "{}", tab.status_msg)?;
+            queue!(out, terminal::Clear(ClearType::UntilNewLine))?;
+        } else {
+            queue!(out, terminal::Clear(ClearType::UntilNewLine))?;
         }
-        queue!(out, terminal::Clear(ClearType::UntilNewLine))?;
 
         // Position cursor with wrapping
         if !buf.crashed {
-            let (cursor_row, cursor_col) = self.cursor_screen_pos();
-            queue!(out, cursor::MoveTo(
-                cursor_col as u16,
-                (cursor_row + 1) as u16, // +1 for tab bar
-            ))?;
+            if tab.mode == Mode::Command {
+                queue!(out, cursor::MoveTo(
+                    (1 + tab.command_buf.len()) as u16,
+                    status_row + 1,
+                ))?;
+            } else {
+                let (cursor_row, cursor_col) = self.cursor_screen_pos();
+                queue!(out, cursor::MoveTo(
+                    cursor_col as u16,
+                    (cursor_row + 1) as u16, // +1 for tab bar
+                ))?;
+            }
         }
 
         queue!(out, cursor::Show)?;

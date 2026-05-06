@@ -55,6 +55,7 @@ pub struct Tab {
     pub mode: Mode,
     pub command_buf: String,
     pub status_msg: String,
+    pub last_command: String,
     pub cursorline: bool,
     pub visual_anchor: (usize, usize),
     pub prev_view: Option<(BufferId, usize, usize, usize)>, // for :help restore
@@ -70,6 +71,7 @@ impl Tab {
             mode: Mode::Normal,
             command_buf: String::new(),
             status_msg: String::new(),
+            last_command: String::new(),
             cursorline: false,
             visual_anchor: (0, 0),
             prev_view: None,
@@ -130,7 +132,13 @@ impl App {
 
     pub fn rows(&self) -> usize {
         let (_, h) = terminal::size().unwrap_or((80, 24));
-        h as usize - 3 // tab bar + status + command
+        let base = h as usize - 3; // tab bar + status + command
+        if self.tab().mode == Mode::Command {
+            // Reserve extra rows for palette: 1 last_command + up to 4 suggestion rows
+            base.saturating_sub(5)
+        } else {
+            base
+        }
     }
 
     pub fn cols(&self) -> usize {
