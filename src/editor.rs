@@ -133,8 +133,12 @@ impl App {
     }
 
     pub fn palette_rows(&self) -> usize {
-        // Fixed reservation: last_command + header + up to 5 suggestion rows
-        7
+        let col_width = 34usize;
+        let num_cols = (self.cols() / col_width).max(1).min(3);
+        let max_suggestions = 10usize;
+        let suggestion_rows = (max_suggestions + num_cols - 1) / num_cols;
+        // last_command + header + suggestion rows
+        suggestion_rows + 2
     }
 
     pub fn rows(&self) -> usize {
