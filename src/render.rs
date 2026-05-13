@@ -1,7 +1,8 @@
 use crossterm::{cursor, queue};
 use crossterm::style::{Color, SetForegroundColor, ResetColor};
 use crossterm::terminal::{self, ClearType};
-use syntect::easy::HighlightLines;
+use syntect::highlighting::{HighlightIterator, HighlightState, Highlighter};
+use syntect::parsing::{ParseState, ScopeStack};
 use std::io::{self, Write};
 
 use crate::editor::App;
@@ -43,16 +44,17 @@ impl App {
         (row_in_viewport, screen_col)
     }
 
-    pub fn draw(&self, out: &mut impl Write) -> io::Result<()> {
+    pub fn draw(&mut self, out: &mut impl Write) -> io::Result<()> {
         queue!(out, cursor::Hide, cursor::MoveTo(0, 0))?;
 
         // Tab bar
         self.draw_tabs(out)?;
 
-        let tab = self.tab();
-        let buf = self.buf();
         let rows = self.rows();
         let cols = self.cols();
+
+        let tab = self.tab();
+        let buf = self.buf();
 
         if buf.crashed {
             queue!(out, cursor::MoveTo(0, 1))?;
@@ -70,12 +72,11 @@ impl App {
                 .ok().flatten()
                 .unwrap_or_else(|| self.ss.find_syntax_plain_text());
             let theme = &self.ts.themes[style::THEME_NAME];
-            let mut h = HighlightLines::new(syntax, theme);
 
             // Find which buffer line corresponds to tab.offset screen rows
             let mut screen_row_acc: usize = 0;
             let mut start_line: usize = 0;
-            let mut skip_wrap_rows: usize = 0; // how many wrap rows to skip in the first visible line
+            let mut skip_wrap_rows: usize = 0;
 
             for i in 0..buf.rope.len_lines() {
                 let lh = self.wrapped_line_height(i);
@@ -88,10 +89,50 @@ impl App {
                 start_line = i + 1;
             }
 
-            // We need to call highlight_line for lines before start_line to keep highlighter state correct
-            for i in 0..start_line {
+            // Use cached highlighter state: find nearest checkpoint before start_line
+            let cache_interval = crate::editor::HL_CACHE_INTERVAL;
+            let bid = tab.buffer_id;
+            let line_count = buf.rope.len_lines();
+
+            let highlighter = Highlighter::new(theme);
+
+            // Determine best starting point from cache
+            let (hl_start, mut parse_state, mut hl_state) = if let Some(ref cache) = self.hl_cache {
+                if cache.buffer_id == bid && cache.line_count == line_count {
+                    let mut best = 0usize;
+                    let mut best_state: Option<&crate::editor::HlState> = None;
+                    for (&cached_line, state) in &cache.states {
+                        if cached_line <= start_line && cached_line >= best {
+                            best = cached_line;
+                            best_state = Some(state);
+                        }
+                    }
+                    match best_state {
+                        Some(s) => (best, s.parse_state.clone(), s.highlight_state.clone()),
+                        None => (0, ParseState::new(syntax), HighlightState::new(&highlighter, ScopeStack::new())),
+                    }
+                } else {
+                    (0, ParseState::new(syntax), HighlightState::new(&highlighter, ScopeStack::new()))
+                }
+            } else {
+                (0, ParseState::new(syntax), HighlightState::new(&highlighter, ScopeStack::new()))
+            };
+
+            // Warm up from hl_start to start_line, caching at intervals
+            let mut new_cache_entries: Vec<(usize, crate::editor::HlState)> = Vec::new();
+            for i in hl_start..start_line {
+                if i > 0 && i % cache_interval == 0 {
+                    new_cache_entries.push((i, crate::editor::HlState {
+                        parse_state: parse_state.clone(),
+                        highlight_state: hl_state.clone(),
+                    }));
+                }
                 let line_str = buf.rope.line(i).to_string();
-                let _ = h.highlight_line(&line_str, &self.ss);
+                if let Ok(ops) = parse_state.parse_line(&line_str, &self.ss) {
+                    let iter = HighlightIterator::new(&mut hl_state, &ops, &line_str, &highlighter);
+                    // consume iterator to advance state
+                    for _ in iter {}
+                }
             }
 
             let mut screen_y: usize = 0; // current screen row being drawn
@@ -103,8 +144,11 @@ impl App {
                 let line_str = buf.rope.line(line_idx).to_string();
 
                 // Get highlighted segments
-                let ranges = match h.highlight_line(&line_str, &self.ss) {
-                    Ok(r) => r,
+                let ranges = match parse_state.parse_line(&line_str, &self.ss) {
+                    Ok(ops) => {
+                        let iter = HighlightIterator::new(&mut hl_state, &ops, &line_str, &highlighter);
+                        iter.map(|(style, text)| (style, text.to_string())).collect::<Vec<_>>()
+                    }
                     Err(_) => continue,
                 };
 
@@ -169,7 +213,28 @@ impl App {
                 queue!(out, ResetColor, terminal::Clear(ClearType::UntilNewLine))?;
                 screen_y += 1;
             }
+
+            // Update highlighter cache with new entries
+            if !new_cache_entries.is_empty() {
+                let cache = self.hl_cache.get_or_insert_with(|| crate::editor::HlCache {
+                    states: std::collections::HashMap::new(),
+                    buffer_id: bid,
+                    line_count,
+                });
+                if cache.buffer_id != bid || cache.line_count != line_count {
+                    cache.states.clear();
+                    cache.buffer_id = bid;
+                    cache.line_count = line_count;
+                }
+                for (line, state) in new_cache_entries {
+                    cache.states.insert(line, state);
+                }
+            }
         }
+
+        // Re-borrow after cache update
+        let tab = self.tab();
+        let buf = self.buf();
 
         // Status bar
         let status_row = (rows + 1) as u16;

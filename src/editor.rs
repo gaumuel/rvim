@@ -1,12 +1,28 @@
 use crossterm::terminal;
 use ropey::Rope;
 use syntect::highlighting::ThemeSet;
-use syntect::parsing::SyntaxSet;
+use syntect::parsing::{ParseState, SyntaxSet};
 use std::collections::HashMap;
-use std::fs;
+use std::fs::{self, File};
+use std::io::BufReader;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
 use crate::mode::Mode;
+
+// --- Highlighter cache: stores parse states at intervals ---
+pub const HL_CACHE_INTERVAL: usize = 500;
+
+#[derive(Clone)]
+pub struct HlState {
+    pub parse_state: ParseState,
+    pub highlight_state: syntect::highlighting::HighlightState,
+}
+
+pub struct HlCache {
+    pub states: HashMap<usize, HlState>,
+    pub buffer_id: BufferId,
+    pub line_count: usize,
+}
 
 // --- Buffer: shared content ---
 pub type BufferId = usize;
@@ -22,10 +38,10 @@ pub struct Buffer {
 impl Buffer {
     pub fn new(id: BufferId, filename: Option<String>) -> Self {
         let rope = match &filename {
-            Some(f) => fs::read_to_string(f)
-                .map(|s| Rope::from_str(&s))
-                .unwrap_or_else(|_| Rope::from_str("")),
-            None => Rope::from_str(""),
+            Some(f) => File::open(f)
+                .map(|file| Rope::from_reader(BufReader::new(file)).unwrap_or_default())
+                .unwrap_or_default(),
+            None => Rope::new(),
         };
         Buffer { id, rope, filename, dirty: false, crashed: false }
     }
@@ -90,6 +106,7 @@ pub struct App {
     pub ss: SyntaxSet,
     pub ts: ThemeSet,
     pub quit: bool,
+    pub hl_cache: Option<HlCache>,
 }
 
 impl App {
@@ -102,6 +119,7 @@ impl App {
             ss: SyntaxSet::load_defaults_newlines(),
             ts: ThemeSet::load_defaults(),
             quit: false,
+            hl_cache: None,
         };
         let bid = app.create_buffer(filename);
         app.tabs.push(Tab::new(bid));
@@ -214,7 +232,13 @@ impl App {
         let tab = &mut self.tabs[self.active_tab];
         let result = catch_unwind(AssertUnwindSafe(|| f(buf, tab)));
         match result {
-            Ok(r) => Some(r),
+            Ok(r) => {
+                // Invalidate highlight cache on edit
+                if self.buffers[&bid].dirty {
+                    self.hl_cache = None;
+                }
+                Some(r)
+            }
             Err(_) => {
                 self.buffers.get_mut(&bid).unwrap().crashed = true;
                 self.tabs[self.active_tab].status_msg = String::from("Buffer CRASHED! Switch with :buffer <id>");
