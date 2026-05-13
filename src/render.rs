@@ -66,6 +66,16 @@ impl App {
             queue!(out, cursor::MoveTo(0, 4))?;
             write!(out, "  Use :buffer <id> to switch or :ls to list buffers.")?;
             queue!(out, ResetColor)?;
+        } else if buf.loading {
+            queue!(out, cursor::MoveTo(0, 1))?;
+            queue!(out, SetForegroundColor(Color::DarkYellow))?;
+            write!(out, "  Loading {}...", buf.name())?;
+            queue!(out, ResetColor, terminal::Clear(ClearType::UntilNewLine))?;
+            // Fill rest with empty
+            for row in 2..=rows {
+                queue!(out, cursor::MoveTo(0, row as u16))?;
+                queue!(out, terminal::Clear(ClearType::UntilNewLine))?;
+            }
         } else {
             let ext = buf.filename.as_deref().unwrap_or("txt");
             let syntax = self.ss.find_syntax_for_file(ext)

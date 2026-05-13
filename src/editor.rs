@@ -6,6 +6,8 @@ use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::BufReader;
 use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::sync::mpsc::{self, Receiver, TryRecvError};
+use std::thread;
 
 use crate::mode::Mode;
 
@@ -33,17 +35,29 @@ pub struct Buffer {
     pub filename: Option<String>,
     pub dirty: bool,
     pub crashed: bool,
+    pub loading: bool,
 }
+
+const ASYNC_LOAD_THRESHOLD: u64 = 1_000_000; // 1MB
 
 impl Buffer {
     pub fn new(id: BufferId, filename: Option<String>) -> Self {
-        let rope = match &filename {
-            Some(f) => File::open(f)
-                .map(|file| Rope::from_reader(BufReader::new(file)).unwrap_or_default())
-                .unwrap_or_default(),
-            None => Rope::new(),
+        let (rope, loading) = match &filename {
+            Some(f) => {
+                let size = std::fs::metadata(f).map(|m| m.len()).unwrap_or(0);
+                if size > ASYNC_LOAD_THRESHOLD {
+                    // Large file: start empty, load async
+                    (Rope::new(), true)
+                } else {
+                    let rope = File::open(f)
+                        .map(|file| Rope::from_reader(BufReader::new(file)).unwrap_or_default())
+                        .unwrap_or_default();
+                    (rope, false)
+                }
+            }
+            None => (Rope::new(), false),
         };
-        Buffer { id, rope, filename, dirty: false, crashed: false }
+        Buffer { id, rope, filename, dirty: false, crashed: false, loading }
     }
 
     pub fn name(&self) -> &str {
@@ -107,6 +121,7 @@ pub struct App {
     pub ts: ThemeSet,
     pub quit: bool,
     pub hl_cache: Option<HlCache>,
+    pub pending_loads: Vec<(BufferId, Receiver<Rope>)>,
 }
 
 impl App {
@@ -120,6 +135,7 @@ impl App {
             ts: ThemeSet::load_defaults(),
             quit: false,
             hl_cache: None,
+            pending_loads: Vec::new(),
         };
         let bid = app.create_buffer(filename);
         app.tabs.push(Tab::new(bid));
@@ -129,8 +145,46 @@ impl App {
     pub fn create_buffer(&mut self, filename: Option<String>) -> BufferId {
         let id = self.next_buf_id;
         self.next_buf_id += 1;
-        self.buffers.insert(id, Buffer::new(id, filename));
+        let buf = Buffer::new(id, filename.clone());
+        let loading = buf.loading;
+        self.buffers.insert(id, buf);
+
+        if loading {
+            if let Some(path) = filename {
+                let (tx, rx) = mpsc::channel();
+                thread::spawn(move || {
+                    let rope = File::open(&path)
+                        .map(|file| Rope::from_reader(BufReader::new(file)).unwrap_or_default())
+                        .unwrap_or_default();
+                    tx.send(rope).ok();
+                });
+                self.pending_loads.push((id, rx));
+            }
+        }
         id
+    }
+
+    /// Poll background file loads, completing any that are ready.
+    pub fn poll_loads(&mut self) {
+        self.pending_loads.retain(|(bid, rx)| {
+            match rx.try_recv() {
+                Ok(rope) => {
+                    if let Some(buf) = self.buffers.get_mut(bid) {
+                        buf.rope = rope;
+                        buf.loading = false;
+                    }
+                    false // remove from pending
+                }
+                Err(TryRecvError::Empty) => true, // still loading
+                Err(TryRecvError::Disconnected) => {
+                    // Thread died, mark as done
+                    if let Some(buf) = self.buffers.get_mut(bid) {
+                        buf.loading = false;
+                    }
+                    false
+                }
+            }
+        });
     }
 
     pub fn tab(&self) -> &Tab {

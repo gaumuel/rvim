@@ -12,6 +12,7 @@ use crossterm::{
 };
 use std::io::{self, stdout};
 use std::env;
+use std::time::Duration;
 
 fn main() -> io::Result<()> {
     let filename = env::args().nth(1);
@@ -22,15 +23,18 @@ fn main() -> io::Result<()> {
     execute!(out, terminal::EnterAlternateScreen, cursor::Show)?;
 
     loop {
+        app.poll_loads();
         app.clamp_cursor();
         app.scroll();
         app.draw(&mut out)?;
 
-        if let Ok(ev) = event::read() {
-            if let Event::Key(KeyEvent { code: KeyCode::Char('c'), modifiers: KeyModifiers::CONTROL, .. }) = ev {
-                break;
+        if event::poll(Duration::from_millis(50))? {
+            if let Ok(ev) = event::read() {
+                if let Event::Key(KeyEvent { code: KeyCode::Char('c'), modifiers: KeyModifiers::CONTROL, .. }) = ev {
+                    break;
+                }
+                app.handle_event(ev);
             }
-            app.handle_event(ev);
         }
 
         if app.quit { break; }
