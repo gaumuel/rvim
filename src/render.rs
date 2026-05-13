@@ -215,25 +215,71 @@ impl App {
                 let col_width = 34usize;
                 let num_cols = (cols / col_width).max(1);
                 let cmd_name_width = 16usize;
-                let desc_max = col_width - cmd_name_width - 2; // space for desc
+                let desc_max = col_width - cmd_name_width - 2;
+
                 let mut row_offset = 0u16;
-                for chunk in shown.chunks(num_cols) {
-                    queue!(out, cursor::MoveTo(0, status_row + 3 + row_offset))?;
-                    for cmd in chunk {
-                        queue!(out, SetForegroundColor(Color::DarkGreen))?;
-                        write!(out, " :{:<w$}", cmd, w = cmd_name_width)?;
-                        let desc = crate::commands::description(cmd);
-                        let truncated = if desc.len() > desc_max { &desc[..desc_max] } else { desc };
-                        queue!(out, SetForegroundColor(Color::DarkGrey))?;
-                        write!(out, "{:<w$}", truncated, w = desc_max)?;
-                    }
+
+                // Show group index when input is empty
+                if tab.command_buf.is_empty() {
+                    let groups = [
+                        ("f…", "File commands"),
+                        ("b…", "Buffer commands"),
+                        ("t…", "Tab commands"),
+                        ("set…", "Settings"),
+                        ("help", "Show help"),
+                    ];
+                    queue!(out, cursor::MoveTo(0, status_row + 3))?;
+                    queue!(out, SetForegroundColor(Color::DarkYellow))?;
+                    write!(out, " Groups:")?;
                     queue!(out, ResetColor, terminal::Clear(ClearType::UntilNewLine))?;
-                    row_offset += 1;
+                    row_offset = 1;
+                    for chunk in groups.chunks(num_cols) {
+                        queue!(out, cursor::MoveTo(0, status_row + 3 + row_offset))?;
+                        for (prefix, desc) in chunk {
+                            queue!(out, SetForegroundColor(Color::DarkGreen))?;
+                            write!(out, " :{:<w$}", prefix, w = cmd_name_width)?;
+                            let truncated = if desc.len() > desc_max { &desc[..desc_max] } else { *desc };
+                            queue!(out, SetForegroundColor(Color::DarkGrey))?;
+                            write!(out, "{:<w$}", truncated, w = desc_max)?;
+                        }
+                        queue!(out, ResetColor, terminal::Clear(ClearType::UntilNewLine))?;
+                        row_offset += 1;
+                    }
+                } else {
+                    // Show group header if input matches a group prefix
+                    let group_label = match tab.command_buf.as_str() {
+                        s if s.starts_with("f") && !s.contains(' ') => Some("── File ──"),
+                        s if s.starts_with("b") && !s.contains(' ') => Some("── Buffer ──"),
+                        s if s.starts_with("t") && !s.contains(' ') => Some("── Tab ──"),
+                        s if s.starts_with("set") => Some("── Settings ──"),
+                        _ => None,
+                    };
+
+                    if let Some(label) = group_label {
+                        queue!(out, cursor::MoveTo(0, status_row + 3))?;
+                        queue!(out, SetForegroundColor(Color::DarkYellow))?;
+                        write!(out, " {}", label)?;
+                        queue!(out, ResetColor, terminal::Clear(ClearType::UntilNewLine))?;
+                        row_offset = 1;
+                    }
+
+                    for chunk in shown.chunks(num_cols) {
+                        queue!(out, cursor::MoveTo(0, status_row + 3 + row_offset))?;
+                        for cmd in chunk {
+                            queue!(out, SetForegroundColor(Color::DarkGreen))?;
+                            write!(out, " :{:<w$}", cmd, w = cmd_name_width)?;
+                            let desc = crate::commands::description(cmd);
+                            let truncated = if desc.len() > desc_max { &desc[..desc_max] } else { desc };
+                            queue!(out, SetForegroundColor(Color::DarkGrey))?;
+                            write!(out, "{:<w$}", truncated, w = desc_max)?;
+                        }
+                        queue!(out, ResetColor, terminal::Clear(ClearType::UntilNewLine))?;
+                        row_offset += 1;
+                    }
                 }
                 // Clear any leftover lines below
-                let total_palette_rows = ((shown.len() + num_cols - 1) / num_cols) as u16;
                 let max_palette_rows = self.palette_rows() as u16;
-                for extra in total_palette_rows..max_palette_rows {
+                for extra in row_offset as u16..max_palette_rows {
                     queue!(out, cursor::MoveTo(0, status_row + 3 + extra))?;
                     queue!(out, terminal::Clear(ClearType::UntilNewLine))?;
                 }

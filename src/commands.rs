@@ -2,36 +2,59 @@ use std::collections::BTreeSet;
 
 pub fn all_commands() -> BTreeSet<&'static str> {
     BTreeSet::from([
-        "q", "q!", "w", "wq", "x",
+        // File
+        "fw", "fq", "fq!", "fx",
+        // Buffer
+        "bnew", "buffer", "bk", "bl",
+        // Tab
+        "tnew", "tnext", "tprev", "tclose",
+        // Settings
+        "set cursorline", "set nocursorline",
+        // Help
         "help",
+        // Aliases (old commands)
+        "w", "q", "q!", "wq", "x",
+        "e",
+        "kb", "ls",
         "tabnew", "tabnext", "tabprev", "tabclose",
         "gt", "gT",
-        "e", "bnew", "buffer", "kb", "ls",
-        "set cursorline", "set nocursorline",
     ])
 }
 
 pub fn description(cmd: &str) -> &'static str {
     match cmd {
-        "q" => "Close tab/quit",
-        "q!" => "Force close",
-        "w" => "Save file",
-        "wq" => "Save and close",
-        "x" => "Save and close",
-        "help" => "Show help",
-        "tabnew" => "New tab",
-        "tabnext" => "Next tab",
-        "tabprev" => "Previous tab",
-        "tabclose" => "Close tab",
-        "gt" => "Next tab",
-        "gT" => "Previous tab",
-        "e" => "Open file",
+        // File group
+        "fw" => "Save file",
+        "fq" => "Close tab/quit",
+        "fq!" => "Force close",
+        "fx" => "Save and close",
+        // Buffer group
         "bnew" => "New buffer",
-        "buffer" => "Switch buffer",
-        "kb" => "Kill buffer",
-        "ls" => "List buffers",
+        "buffer" => "Switch buffer by ID",
+        "bk" => "Kill buffer",
+        "bl" => "List buffers",
+        // Tab group
+        "tnew" => "New tab",
+        "tnext" => "Next tab",
+        "tprev" => "Previous tab",
+        "tclose" => "Close tab",
+        // Settings
         "set cursorline" => "Highlight cursor line",
         "set nocursorline" => "Disable cursor highlight",
+        // Help
+        "help" => "Show help",
+        // Aliases
+        "w" => "Save (alias: fw)",
+        "q" => "Close (alias: fq)",
+        "q!" => "Force close (alias: fq!)",
+        "wq" | "x" => "Save+close (alias: fx)",
+        "e" => "Open file in buffer",
+        "kb" => "Kill buffer (alias: bk)",
+        "ls" => "List buffers (alias: bl)",
+        "tabnew" => "New tab (alias: tnew)",
+        "tabnext" | "gt" => "Next tab (alias: tnext)",
+        "tabprev" | "gT" => "Prev tab (alias: tprev)",
+        "tabclose" => "Close tab (alias: tclose)",
         _ => "",
     }
 }

@@ -317,7 +317,7 @@ impl App {
         let cmd = self.tab().command_buf.trim().to_string();
         self.tab_mut().last_command = cmd.clone();
         match cmd.as_str() {
-            "q" | "q!" => {
+            "q" | "q!" | "fq" | "fq!" => {
                 // If viewing a temporary buffer, restore previous view and remove temp buffer
                 if let Some((bid, cx, cy, offset)) = self.tab().prev_view {
                     let temp_bid = self.tab().buffer_id;
@@ -334,21 +334,21 @@ impl App {
                     self.close_tab();
                 }
             }
-            "w" => {
+            "w" | "fw" => {
                 let msg = self.buf_mut().save();
                 self.tab_mut().status_msg = msg;
             }
-            "wq" | "x" => {
+            "wq" | "x" | "fx" => {
                 let msg = self.buf_mut().save();
                 self.tab_mut().status_msg = msg;
                 self.close_tab();
             }
             "help" => self.open_help(),
             // Tab commands
-            "tabnew" => self.new_tab(None),
-            "tabnext" | "gt" => self.next_tab(),
-            "tabprev" | "gT" => self.prev_tab(),
-            "tabclose" => self.close_tab(),
+            "tabnew" | "tnew" => self.new_tab(None),
+            "tabnext" | "gt" | "tnext" => self.next_tab(),
+            "tabprev" | "gT" | "tprev" => self.prev_tab(),
+            "tabclose" | "tclose" => self.close_tab(),
             // Buffer commands
             "bnew" => {
                 let bid = self.create_buffer(None);
@@ -357,10 +357,10 @@ impl App {
                 self.tab_mut().cy = 0;
                 self.tab_mut().offset = 0;
             }
-            "kb" => {
+            "kb" | "bk" => {
                 self.kill_buffer(self.tab().buffer_id);
             }
-            "ls" => {
+            "ls" | "bl" => {
                 let list = self.buffer_list();
                 // If already in a temp view, just replace content in-place
                 if self.tab().prev_view.is_some() {
@@ -388,11 +388,11 @@ impl App {
             "set cursorline" => self.tab_mut().cursorline = true,
             "set nocursorline" => self.tab_mut().cursorline = false,
             _ => {
-                if let Some(name) = cmd.strip_prefix("w ") {
+                if let Some(name) = cmd.strip_prefix("fw ").or_else(|| cmd.strip_prefix("w ")) {
                     self.buf_mut().filename = Some(name.to_string());
                     let msg = self.buf_mut().save();
                     self.tab_mut().status_msg = msg;
-                } else if let Some(name) = cmd.strip_prefix("tabnew ") {
+                } else if let Some(name) = cmd.strip_prefix("tnew ").or_else(|| cmd.strip_prefix("tabnew ")) {
                     self.new_tab(Some(name.to_string()));
                 } else if let Some(name) = cmd.strip_prefix("e ") {
                     // Open file in new buffer, switch current tab to it
@@ -408,7 +408,7 @@ impl App {
                     } else {
                         self.tab_mut().status_msg = format!("Invalid buffer id: {}", id_str);
                     }
-                } else if let Some(id_str) = cmd.strip_prefix("kb ") {
+                } else if let Some(id_str) = cmd.strip_prefix("bk ").or_else(|| cmd.strip_prefix("kb ")) {
                     if let Ok(bid) = id_str.trim().parse::<usize>() {
                         self.kill_buffer(bid);
                     } else {

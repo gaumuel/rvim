@@ -41,34 +41,41 @@ VISUAL MODE
   Esc            Cancel selection
 
 COMMANDS
-  :w             Save file
-  :w <name>     Save as <name>
-  :q             Close tab (or close help)
-  :q!            Force close tab
-  :wq / :x      Save and close tab
-  :help          Show this help
+  Commands are grouped by prefix for easy discovery.
+  Type :f, :b, :t, or :set to see each group in the palette.
 
-TABS
-  :tabnew            Open new empty tab
-  :tabnew <file>     Open file in new tab
-  :tabnext / :gt     Switch to next tab
-  :tabprev / :gT     Switch to previous tab
-  :tabclose          Close current tab
+  FILE (:f)
+    :fw            Save file
+    :fw <name>     Save as <name>
+    :fq            Close tab (or close help)
+    :fq!           Force close tab
+    :fx            Save and close tab
 
-BUFFERS
-  :e <file>          Open file in new buffer (current tab)
-  :bnew              Create new empty buffer (current tab)
-  :buffer <id>       Switch current tab to buffer by ID
-  :kb                Kill current buffer (tab stays, switches to another)
-  :kb <id>           Kill buffer by ID
-  :ls                List all open buffers
+  BUFFER (:b)
+    :bnew          Create new empty buffer (current tab)
+    :buffer <id>   Switch current tab to buffer by ID
+    :bk            Kill current buffer
+    :bk <id>      Kill buffer by ID
+    :bl            List all open buffers
 
-  Buffers are shared - multiple tabs can view the same buffer.
-  If a buffer crashes, switch to another with :buffer <id>.
+  TAB (:t)
+    :tnew              Open new empty tab
+    :tnew <file>       Open file in new tab
+    :tnext             Switch to next tab
+    :tprev             Switch to previous tab
+    :tclose            Close current tab
 
-SETTINGS
-  :set cursorline      Enable cursor line highlight
-  :set nocursorline    Disable cursor line highlight
+  SETTINGS (:set)
+    :set cursorline      Enable cursor line highlight
+    :set nocursorline    Disable cursor line highlight
+
+  OTHER
+    :help          Show this help
+    :e <file>      Open file in new buffer (current tab)
+
+  ALIASES (vim-compatible)
+    :w :q :q! :wq :x :gt :gT :kb :ls
+    :tabnew :tabnext :tabprev :tabclose
 
 GLOBAL
   Ctrl+C         Force quit all
