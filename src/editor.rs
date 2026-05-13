@@ -132,12 +132,19 @@ impl App {
         self.buffers.get_mut(&bid).unwrap()
     }
 
+    pub fn palette_rows(&self) -> usize {
+        let col_width = 34usize;
+        let num_cols = (self.cols() / col_width).max(1);
+        let max_suggestions = 10usize;
+        let suggestion_rows = (max_suggestions + num_cols - 1) / num_cols;
+        suggestion_rows + 1 // +1 for last_command line
+    }
+
     pub fn rows(&self) -> usize {
         let (_, h) = terminal::size().unwrap_or((80, 24));
         let base = h as usize - 3; // tab bar + status + command
         if self.tab().mode == Mode::Command {
-            // Reserve extra rows for palette: 1 last_command + up to 4 suggestion rows
-            base.saturating_sub(5)
+            base.saturating_sub(self.palette_rows())
         } else {
             base
         }

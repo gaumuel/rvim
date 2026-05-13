@@ -210,23 +210,30 @@ impl App {
             }
             queue!(out, ResetColor, terminal::Clear(ClearType::UntilNewLine))?;
 
-            // Row 3+: suggestions in columns
+            // Row 3+: suggestions in columns with descriptions
             if !shown.is_empty() {
-                let col_width = 20usize;
+                let col_width = 34usize;
                 let num_cols = (cols / col_width).max(1);
+                let cmd_name_width = 16usize;
+                let desc_max = col_width - cmd_name_width - 2; // space for desc
                 let mut row_offset = 0u16;
                 for chunk in shown.chunks(num_cols) {
                     queue!(out, cursor::MoveTo(0, status_row + 3 + row_offset))?;
-                    queue!(out, SetForegroundColor(Color::DarkGreen))?;
                     for cmd in chunk {
-                        write!(out, " :{:<width$}", cmd, width = col_width - 2)?;
+                        queue!(out, SetForegroundColor(Color::DarkGreen))?;
+                        write!(out, " :{:<w$}", cmd, w = cmd_name_width)?;
+                        let desc = crate::commands::description(cmd);
+                        let truncated = if desc.len() > desc_max { &desc[..desc_max] } else { desc };
+                        queue!(out, SetForegroundColor(Color::DarkGrey))?;
+                        write!(out, "{:<w$}", truncated, w = desc_max)?;
                     }
                     queue!(out, ResetColor, terminal::Clear(ClearType::UntilNewLine))?;
                     row_offset += 1;
                 }
                 // Clear any leftover lines below
                 let total_palette_rows = ((shown.len() + num_cols - 1) / num_cols) as u16;
-                for extra in total_palette_rows..max_suggestions as u16 {
+                let max_palette_rows = self.palette_rows() as u16;
+                for extra in total_palette_rows..max_palette_rows {
                     queue!(out, cursor::MoveTo(0, status_row + 3 + extra))?;
                     queue!(out, terminal::Clear(ClearType::UntilNewLine))?;
                 }
